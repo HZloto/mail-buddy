@@ -18,8 +18,8 @@ from googleapiclient.errors import HttpError
 # If modifying these scopes, delete the file token.json.
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
-# Define a file path to store previous email IDs
-PREVIOUS_EMAILS_FILE = "previous_emails.json"
+# Define a file path to store the last email ID processed
+LAST_EMAIL_ID_FILE = "last_email_id.json"
 
 # Load environment variables from .env
 load_dotenv()
@@ -44,18 +44,47 @@ def clean_text(text):
     return text.strip()
 
 def get_email_content(payload):
+    import base64
+    from bs4 import BeautifulSoup
+
+    def traverse_parts(parts):
+        for part in parts:
+            mime_type = part.get('mimeType', '')
+            if mime_type == 'text/plain':
+                data = part['body'].get('data', '')
+                if data:
+                    text_content = base64.urlsafe_b64decode(data).decode('utf-8')
+                    return clean_text(text_content)
+            elif mime_type == 'text/html':
+                data = part['body'].get('data', '')
+                if data:
+                    html_content = base64.urlsafe_b64decode(data).decode('utf-8')
+                    text_content = BeautifulSoup(html_content, "html.parser").get_text()
+                    return clean_text(text_content)
+            elif 'parts' in part:
+                # Recursively traverse nested parts
+                result = traverse_parts(part['parts'])
+                if result:
+                    return result
+        return None
+
+    # Start traversal from the payload
     if 'parts' in payload:
-        for part in payload['parts']:
-            if part['mimeType'] == 'text/plain':
-                text_content = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
-                return clean_text(text_content)
-            elif part['mimeType'] == 'text/html':
-                html_content = base64.urlsafe_b64decode(part['body']['data']).decode('utf-8')
-                text_content = BeautifulSoup(html_content, "html.parser").get_text()
-                return clean_text(text_content)
-    elif 'body' in payload and 'data' in payload['body']:
-        text_content = base64.urlsafe_b64decode(payload['body']['data']).decode('utf-8')
-        return clean_text(text_content)
+        content = traverse_parts(payload['parts'])
+        if content:
+            return content
+    elif payload.get('mimeType', '') == 'text/plain':
+        data = payload['body'].get('data', '')
+        if data:
+            text_content = base64.urlsafe_b64decode(data).decode('utf-8')
+            return clean_text(text_content)
+    elif payload.get('mimeType', '') == 'text/html':
+        data = payload['body'].get('data', '')
+        if data:
+            html_content = base64.urlsafe_b64decode(data).decode('utf-8')
+            text_content = BeautifulSoup(html_content, "html.parser").get_text()
+            return clean_text(text_content)
+
     return "No content available"
 
 def get_email_category(message):
@@ -69,81 +98,122 @@ def get_email_category(message):
             return 'Primary'
     return 'Unknown'
 
-def load_previous_emails():
-    if os.path.exists(PREVIOUS_EMAILS_FILE):
-        with open(PREVIOUS_EMAILS_FILE, 'r') as f:
-            return set(json.load(f))
-    return set()
-
-def save_current_emails(email_ids):
-    with open(PREVIOUS_EMAILS_FILE, 'w') as f:
-        json.dump(list(email_ids), f)
-
-def get_latest_emails(service, num_emails=10):
-    results = service.users().messages().list(userId='me', maxResults=num_emails, q="is:inbox").execute()
+def get_new_emails(service):
+    # Fetch emails from the inbox received in the past 3 hours
+    query = "is:inbox newer_than:1h"
+    results = service.users().messages().list(userId='me', q=query).execute()
     messages = results.get('messages', [])
 
-    # Load previous email IDs to identify new emails
-    previous_email_ids = load_previous_emails()
-    current_email_ids = set()
     email_data = []
 
     for msg in messages:
         email_id = msg['id']
-        current_email_ids.add(email_id)
-        
-        # Proceed only if email is new
-        if email_id not in previous_email_ids:
-            message = service.users().messages().get(userId='me', id=email_id, format='full').execute()
-            headers = message['payload']['headers']
-            date = next((h['value'] for h in headers if h['name'] == 'Date'), "No Date")
-            sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
-            subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
-            
-            # Determine category based on labels
-            category = get_email_category(message)
-            
-            # Get the email content
-            email_content = get_email_content(message['payload'])
+        message = service.users().messages().get(userId='me', id=email_id, format='full').execute()
+        headers = message['payload']['headers']
+        date = next((h['value'] for h in headers if h['name'] == 'Date'), "No Date")
+        sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
+        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
 
-            # Append data to list
-            email_data.append({
-                "Date Received": date,
-                "Sender": sender,
-                "Category": category,
-                "Message Content": email_content,
-                "Subject": subject,
-                "Email ID": email_id  # Include Email ID for future reference
-            })
-        else:
-            # Skip emails that have been seen before
+        # Determine category based on labels
+        category = get_email_category(message)
+
+        # Skip emails in the promotions category
+        if category == 'Promotions':
             continue
 
-    # Save current email IDs for the next run
-    save_current_emails(current_email_ids)
+        # Get the email content
+        email_content = get_email_content(message['payload'])
 
-    # Create DataFrame with the modified column order
+        # Append data to list
+        email_data.append({
+            "Date Received": date,
+            "Sender": sender,
+            "Category": category,
+            "Message Content": email_content,
+            "Subject": subject,
+            "Email ID": email_id
+        })
+
+    # Create DataFrame
+    df = pd.DataFrame(email_data)
+    return df
+
+    last_email_id = load_last_email_id()
+    query = "is:inbox"
+    # If it's the first run, fetch only the latest unread email
+    if not last_email_id:
+        query += " is:unread"
+        max_results = 1
+    else:
+        # Fetch all emails after the last email ID
+        query += f" newer_than_id:{last_email_id}"
+        max_results = None  # No limit
+
+    # Fetch messages matching the query
+    results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
+    messages = results.get('messages', [])
+
+    email_data = []
+    last_processed_email_id = last_email_id
+
+    for msg in reversed(messages):  # Reverse to process oldest first
+        email_id = msg['id']
+        message = service.users().messages().get(userId='me', id=email_id, format='full').execute()
+        headers = message['payload']['headers']
+        date = next((h['value'] for h in headers if h['name'] == 'Date'), "No Date")
+        sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
+        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
+
+        # Determine category based on labels
+        category = get_email_category(message)
+
+        # Skip emails in the promotions category
+        if category == 'Promotions':
+            continue
+
+        # Get the email content
+        email_content = get_email_content(message['payload'])
+
+        # Append data to list
+        email_data.append({
+            "Date Received": date,
+            "Sender": sender,
+            "Category": category,
+            "Message Content": email_content,
+            "Subject": subject,
+            "Email ID": email_id
+        })
+
+        # Update the last processed email ID
+        last_processed_email_id = email_id
+
+    # Save the ID of the last processed email
+    if last_processed_email_id:
+        save_last_email_id(last_processed_email_id)
+
+    # Create DataFrame
     df = pd.DataFrame(email_data)
     return df
 
 def parse_email(email_content):
     email_parser_prompt = '''
-    You are an email parser. Your task is to assess whether an email seems important and provide a 25-word summary of its contents.
+    You are an email parser. Your task is to assess whether an email seems important and provide a 15-word max summary of its contents.
     Label the email as "Important" or "Not Important" based on keywords like deadlines, meetings, urgent tasks, approvals, or action items.
-    Then, summarize the key details and main point of the email in exactly 25 words.
+    Then, summarize the key details and main point of the email in a short sentence eg: Hugo wants to have lunch tomorrow. the mail always includes contact details so don't mention that.
     '''
     response = client.chat.completions.create(
         model=MODEL,
         messages=[
             {
-                "role": "system", 
+                "role": "system",
                 "content": dedent(email_parser_prompt)
             },
             {
-                "role": "user", 
+                "role": "user",
                 "content": email_content
             }
         ],
+        # Keep the OpenAI API call intact as per your latest schema
         response_format={
             "type": "json_schema",
             "json_schema": {
@@ -167,7 +237,11 @@ def parse_email(email_content):
 
     # Check if message_content is a string; if so, parse it as JSON
     if isinstance(message_content, str):
-        result = json.loads(message_content)
+        try:
+            result = json.loads(message_content)
+        except json.JSONDecodeError:
+            print("Error: Assistant's reply is not valid JSON.")
+            result = {"importance": "Unknown", "summary": message_content}
     elif isinstance(message_content, dict):
         result = message_content
     else:
@@ -176,6 +250,9 @@ def parse_email(email_content):
         result = {}
 
     return result
+
+def remove_non_ascii(s):
+    return ''.join(c if ord(c) < 256 else '?' for c in s)
 
 def send_notification(message_content, sender, subject):
     try:
@@ -186,15 +263,30 @@ def send_notification(message_content, sender, subject):
         print("Error: message_content is not a dictionary.")
         return
 
-    # Determine priority
-    priority = "low" if importance == "Not Important" else "high"
+    # Determine priority and urgency label
+    if importance == "Important":
+        priority = "urgent"
+        urgency_label = "Urgent"
+    else:
+        priority = "low"
+        urgency_label = "Not Urgent"
 
-    # Create the notification message
-    notification_title = f"Email from {sender}: {subject}"
-    notification_body = summary
+    # Extract sender name without email address
+    # sender may be in the format 'Name <email@example.com>'
+    import email.utils
+    name, email_address = email.utils.parseaddr(sender)
+    if name == '':
+        # If name is empty, use the email username (before '@')
+        name = email_address.split('@')[0]
+
+    # Create the notification title
+    notification_title = f"{urgency_label}: from {name}"
 
     # Normalize notification_title to ASCII
     notification_title = remove_non_ascii(notification_title)
+
+    # Notification body is the summary
+    notification_body = summary
 
     # Send POST request to ntfy
     response = requests.post(
@@ -208,10 +300,6 @@ def send_notification(message_content, sender, subject):
         }
     )
     return response
-
-def remove_non_ascii(s):
-    return ''.join(c if ord(c) < 256 else '?' for c in s)
-
 
 def main():
     creds = None
@@ -232,9 +320,9 @@ def main():
     try:
         # Call the Gmail API
         service = build("gmail", "v1", credentials=creds)
-        
-        # Fetch the latest emails in a DataFrame
-        df = get_latest_emails(service, num_emails=10)
+
+        # Fetch new emails
+        df = get_new_emails(service)
 
         if df.empty:
             print("No new emails.")
@@ -256,5 +344,18 @@ def main():
     except HttpError as error:
         print(f"An error occurred: {error}")
 
+import time
+from datetime import datetime, timedelta
+
 if __name__ == "__main__":
-    main()
+    while True:
+            # Run main code
+            main()
+
+            # Calculate the time until the next hour
+            now = datetime.now()
+            next_hour = (now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+            sleep_duration = (next_hour - now).total_seconds()
+
+            # Sleep until the next hour
+            time.sleep(sleep_duration)
