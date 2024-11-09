@@ -164,4 +164,5 @@ cython_debug/
 
 credentials.json
 token.json
-token.json
+latest_emails.csv
+previous_emails.json
