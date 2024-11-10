@@ -17,6 +17,8 @@
 
 <br/>
 
+<i>Disclaimer: mail buddy only works with gmail for now. feel free to add support for your own email provider.</i>
+
 ## Features
 
 - **Smart Filtering**  
