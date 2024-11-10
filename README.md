@@ -70,6 +70,7 @@ To run **Mail Buddy**, you’ll need:
 5. **Configure ntfy**:
    - Follow [ntfy's docs](https://docs.ntfy.sh/) to get the app on your phone and create a channel to use for your own emails
    - Make sure to password protect it if any of the data is sensitive .
+   - Replace the `NTFY_TOPIC_URL` variable in the main.py script (line 37) to your channel url (eg https://ntfy.sh/your-name-mail-buddy)
 
 ### Usage
 
