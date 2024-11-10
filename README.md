@@ -33,6 +33,8 @@
 - **Customizable**  
   Set filters to exclude distracting promotional or low-priority emails.
 
+<img alt="Notification" src="data/notification.jpg">
+
 ## Getting Started
 
 These instructions will help you set up **Mail Buddy** on your local machine.
