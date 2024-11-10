@@ -67,6 +67,10 @@ To run **Mail Buddy**, you’ll need:
    - Follow [Google's guide](https://developers.google.com/gmail/api/quickstart/python) to set up the Gmail API and download your `credentials.json` file.
    - Save `credentials.json` in the project root directory.
 
+5. **Configure ntfy**:
+   - Follow [ntfy's docs](https://docs.ntfy.sh/) to get the app on your phone and create a channel to use for your own emails
+   - Make sure to password protect it if any of the data is sensitive .
+
 ### Usage
 
 To start **Mail Buddy**, run:
@@ -79,7 +83,7 @@ The assistant will monitor new emails, categorize and summarize messages, and se
 
 ## Customization
 
-Adjust notification settings, filtering rules, and scheduling within `main.py` to fit your needs.
+Adjust notification settings, filtering rules, and scheduling within `main.py` to fit your needs. We're currently working on a version of the code hosted directly on a server, coming soon! 
 
 ## Contributing
 

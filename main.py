@@ -31,10 +31,10 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=openai_api_key)
 
 # Model to use
-MODEL = "gpt-4o-mini"  # Adjusted to match your specified model
+MODEL = "gpt-4o-mini"
 
-# ntfy topic URL
-NTFY_TOPIC_URL = "https://ntfy.sh/hz-mail-buddy"
+# ntfy topic URL - download the ntfy app and add a subscription to the topic name you want to use
+NTFY_TOPIC_URL = "https://ntfy.sh/hz-mail-buddy" # Replace with your ntfy topic URL
 
 def clean_text(text):
     text = re.sub(r'http\S+|www\.\S+', '', text)
