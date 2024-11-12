@@ -33,7 +33,8 @@ client = OpenAI(api_key=openai_api_key)
 # Model to use
 MODEL = "gpt-4o-mini"
 
-# ntfy topic URL - download the ntfy app and add a subscription to the topic name you want to use
+# ntfy topic URL - download the ntfy app and add a subscription
+# to the topic name you want to use
 NTFY_TOPIC_URL = "https://ntfy.sh/hz-mail-buddy" # Replace with your ntfy topic URL
 
 def clean_text(text):
@@ -138,64 +139,9 @@ def get_new_emails(service):
     df = pd.DataFrame(email_data)
     return df
 
-    last_email_id = load_last_email_id()
-    query = "is:inbox"
-    # If it's the first run, fetch only the latest unread email
-    if not last_email_id:
-        query += " is:unread"
-        max_results = 1
-    else:
-        # Fetch all emails after the last email ID
-        query += f" newer_than_id:{last_email_id}"
-        max_results = None  # No limit
-
-    # Fetch messages matching the query
-    results = service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
-    messages = results.get('messages', [])
-
-    email_data = []
-    last_processed_email_id = last_email_id
-
-    for msg in reversed(messages):  # Reverse to process oldest first
-        email_id = msg['id']
-        message = service.users().messages().get(userId='me', id=email_id, format='full').execute()
-        headers = message['payload']['headers']
-        date = next((h['value'] for h in headers if h['name'] == 'Date'), "No Date")
-        sender = next((h['value'] for h in headers if h['name'] == 'From'), "Unknown Sender")
-        subject = next((h['value'] for h in headers if h['name'] == 'Subject'), "No Subject")
-
-        # Determine category based on labels
-        category = get_email_category(message)
-
-        # Skip emails in the promotions category
-        if category == 'Promotions':
-            continue
-
-        # Get the email content
-        email_content = get_email_content(message['payload'])
-
-        # Append data to list
-        email_data.append({
-            "Date Received": date,
-            "Sender": sender,
-            "Category": category,
-            "Message Content": email_content,
-            "Subject": subject,
-            "Email ID": email_id
-        })
-
-        # Update the last processed email ID
-        last_processed_email_id = email_id
-
-    # Save the ID of the last processed email
-    if last_processed_email_id:
-        save_last_email_id(last_processed_email_id)
-
-    # Create DataFrame
-    df = pd.DataFrame(email_data)
-    return df
 
 def parse_email(email_content):
+
     email_parser_prompt = '''
     You are an email parser. Your task is to assess whether an email seems important and provide a 15-word max summary of its contents.
     Label the email as "Important" or "Not Important" based on keywords like deadlines, meetings, urgent tasks, approvals, or action items.
